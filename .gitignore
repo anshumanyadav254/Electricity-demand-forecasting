@@ -1,14 +1,107 @@
+#importing all important libraries
+
 import pandas as pd
 import numpy as np
 import math
 import statsmodels.api as sm
 from statsmodels.tsa.statespace.sarimax import SARIMAX
-#from keras.models import Sequential
-#from keras.layers import Dense
-#from keras.layers import LSTM
+from keras.models import Sequential
+from keras.layers import Dense
+from keras.layers import LSTM
 import numpy as np
 from pandas import datetime
 from matplotlib import pyplot as plt
 import os
 from sklearn.preprocessing import MinMaxScaler
 from statsmodels.graphics.tsaplots import plot_acf, plot_pacf
+
+#load the dataset of given Power-Networks-LCL
+df=pd.read_csv("Power-Networks-LCL.csv")   
+
+#now we count house by group by with date time and LCid
+housecount = df.groupby('DateTime')[['LCLid']].nunique()
+housecount.head(4)
+#now plot graph of house count
+housecount.plot(figsize=(25,5))
+
+energy = df.groupby('DateTime')[['KWh']].sum()
+energy = df.merge(housecount, on = ['DateTime'])
+energy = df.reset_index()
+
+energy.count()
+
+energy.DateTime = pd.to_datetime(energy.DateTime,format='%Y-%m-%d').dt.date
+energy['avg_energy'] =  energy['KWh']/ len(energy['LCLid'])
+print("Starting Point of Data at Day Level",min(energy.DateTime))
+print("Ending Point of Data at Day Level",max(energy.DateTime))
+energy.describe()
+
+#energy consumption and visibilty graph
+
+fig, ax1 = plt.subplots(figsize = (20,5))
+ax1.plot(energy.DateTime,energy.avg_energy, color = 'tab:orange')
+ax1.set_ylabel('Avg energy',color = 'tab:orange')
+ax2 = ax1.twinx()
+ax2.plot(energy.DateTime,energy.avg_energy,color = 'tab:blue')
+ax2.set_ylabel('Average Energy/Household',color = 'tab:blue')
+plt.title('Energy Consumption and Visibility')
+fig.tight_layout()
+plt.show()
+
+#training the data model
+
+model_data =energy[['avg_energy','KWh','DateTime']]
+train = model_data.iloc[0:(len(model_data)-30)]
+test = model_data.iloc[len(train):(len(model_data)-1)]
+
+#now plot the train and test data
+
+train['avg_energy'].plot(figsize=(25,4))
+test['avg_energy'].plot(figsize=(25,4))
+
+#now we plot the Autocorelation ghraph
+
+plot_acf(train.avg_energy,lags=100)
+plt.show()
+
+#after Autocorelation now we draw the partial Autocorelation 
+plot_pacf(train.avg_energy,lags=50)
+plt.show()
+
+#model fitting
+
+endog = train['avg_energy']
+exog = sm.add_constant(train[['DateTime','KWh']])
+n=np.asarray(endog)
+m=np.asarray(exog)
+mod = sm.tsa.statespace.SARIMAX(endog=n, exog=m, order=(7,1,1),seasonal_order=(1,1, 0, 12),trend='c')
+model_fit = mod.fit()
+model_fit.summary()
+predict = model_fit.predict(start = len(train),end = len(train)+len(test)-1,exog = sm.add_constant(test[['LCLid','stdorToU']]))
+test['avg_energy'] = predict.values
+test.tail(5)
+
+#now map using MAE and Mape
+test['residual'] = abs(test['avg_energy']-test['KWh'])
+MAE = test['residual'].sum()/len(test)
+MAPE = (abs(test['residual'])/test['avg_energy']).sum()*100/len(test)
+print("MAE:", MAE)
+print("MAPE:", MAPE)
+
+#now we plot the predicted graph on test value
+test['avg_energy'].plot(figsize=(25,10),color = 'red')
+test['KWh'].plot()
+plt.show()
+
+#now we give train data upto 90% and test 10%
+
+#Subset for required columns and 70-30 train-test split
+model_data = energy[['avg_energy','KWh','Acorn']]
+train = model_data.iloc[0:round(len(model_data)*0.90)]
+test = model_data.iloc[len(train)-1:]
+#train = model_data.iloc[0:(len(model_data)-30)]
+#test = model_data.iloc[len(train):(len(model_data)-1)]
+
+#ND PLOT THE GRAPH
+train['avg_energy'].plot(figsize=(25,4))
+test['avg_energy'].plot(figsize=(25,4))
